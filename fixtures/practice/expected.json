@@ -1,0 +1,48 @@
+{
+  "1": {
+    "p_star": 9,
+    "per_room_optima": [
+      9
+    ],
+    "rooms": 1,
+    "boxes": 3
+  },
+  "2": {
+    "p_star": 13,
+    "per_room_optima": [
+      13
+    ],
+    "rooms": 1,
+    "boxes": 4
+  },
+  "3": {
+    "p_star": 20,
+    "per_room_optima": [
+      10,
+      10
+    ],
+    "rooms": 2,
+    "boxes": 8
+  },
+  "4": {
+    "p_star": 32,
+    "per_room_optima": [
+      10,
+      12,
+      10
+    ],
+    "rooms": 3,
+    "boxes": 12
+  },
+  "5": {
+    "p_star": 44,
+    "per_room_optima": [
+      13,
+      10,
+      10,
+      11
+    ],
+    "rooms": 4,
+    "boxes": 16
+  }
+}
