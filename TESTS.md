@@ -20,13 +20,43 @@ boxes, 1 × 4, 2 × 4, 3 × 4, 4 × 4.)
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 1 | 3 | 9 | 9 | 31 | room-decomposed push-optimal A\* | 1000 |
 | 2 | 1 | 4 | 13 | 13 | 46 | room-decomposed push-optimal A\* | 1000 |
-| 3 | 2 | 8 | 20 | 20 | 92 | room-decomposed push-optimal A\* | 1000 |
-| 4 | 3 | 12 | 32 | 32 | 178 | room-decomposed push-optimal A\* | 1000 |
-| 5 | 4 | 16 | 44 | 44 | 204 | room-decomposed push-optimal A\* | 1000 |
+| 3 | 2 | 8 | 18 | 18 | 84 | room-decomposed push-optimal A\* | 1000 |
+| 4 | 3 | 12 | 28 | 28 | 176 | room-decomposed push-optimal A\* | 1000 |
+| 5 | 4 | 16 | 40 | 40 | 188 | room-decomposed push-optimal A\* | 1000 |
 
 **Total: 5/5 solved, every level exactly at P\*, estimated score
-1,000,000 / 1,000,000, whole set in 1.05 s (limit: 60 s).**
+1,000,000 / 1,000,000, whole set in ~2.4 s (limit: 60 s).**
 Two consecutive runs produce byte-identical outputs (determinism: True).
+
+> Note: `fixtures/practice/expected.json` previously listed P\* as
+> 9/13/20/32/44 — those were computed with the pre-fix solver's
+> `--room-opt` and were overestimates. The kit's own reference solver
+> (`program/generator/subject/solver.mjs::solveByRooms`) gives the true
+> optima 9/13/18/28/40 (per-room 9; 13; 8+10; 10+10+8; 10+9+11+10),
+> matching this solver exactly; `expected.json` was corrected to them
+> on 2026-11-21.
+
+## Official kit practice set (real levels, 2026-11-21)
+
+Kit `sokoban-solver-01-run-20261121-kit` (downloaded from
+`GET /c/sokoban-solver-01-run-20261121/kit`), `grade-local --driver
+process`: **score 1,000,000 / 1,000,000** — all 5 levels solved exactly
+at P\* (manifest keys 13, 16, 29, 47, 60; per-room sums 13; 16; 15+14;
+15+15+17; 16+14+14+16), whole set in ~2.3 s, two executions
+byte-identical (L1 regrade reproduced byte for byte). The house baseline
+`plain-astar 1.0.0` scores 200,000 on the same set (solves i001 only).
+
+This run caught the bug the fixture set had missed: the pre-fix solver
+scored **0** on the real practice set. Its corner / wall-line dead-square
+heuristic wrongly marked live squares dead (e.g. i001's boxes at (3,5)
+and (4,7), which escape their wall run at its open end), pruning every
+successor, and its longest-straight-run hallway guess found partial or
+wrong rooms on i001–i003. The fix (2026-11-21, in `main.ts`): exact dead
+squares by reverse pulls from the goals, and room decomposition by
+cutting the player's row's dead squares (the kit's own `roomsOf`
+method). Both fixes follow the kit's own solver
+(`program/generator/subject/solver.mjs`); the fixture P\* values above
+were corrected at the same time (see note).
 
 \*Points use the assumed checker formula 1000 × P\*/pushes (1000 at
 optimum); the exact checker formula lives in the kit, which could not be
@@ -54,10 +84,10 @@ downloaded here (see README).
 
 ## Not tested here (needs the official kit)
 
-- The real practice set (kit download page returned no extractable
-  content via the text fetcher, so it was not retrieved).
-- `grade-local` in the grader sandbox (Node 22, 1 CPU, 512 MB, 60 s,
-  `/input` + `/output` layout). Local runs use Node 24; `main.ts` uses
-  only erasable TypeScript syntax so Node 22 type-stripping runs it.
-- Which exact output filename the checker reads — `main.ts` writes
-  every plausible one (see README).
+- `grade-local` in the grader sandbox (Docker, Node 22/26, 1 CPU,
+  512 MB, 60 s, `/input` + `/output` layout). Local runs use Node 24
+  with `--driver process`; the kit's own note says the score is the same
+  either way and the L1 regrade reproduced byte for byte.
+- Which exact output filename the checker reads — verified: the checker
+  reads `<id>/solution.txt` only (see README); `main.ts` also writes the
+  other usual names as harmless extras.

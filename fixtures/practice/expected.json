@@ -16,31 +16,31 @@
     "boxes": 4
   },
   "3": {
-    "p_star": 20,
+    "p_star": 18,
     "per_room_optima": [
-      10,
+      8,
       10
     ],
     "rooms": 2,
     "boxes": 8
   },
   "4": {
-    "p_star": 32,
+    "p_star": 28,
     "per_room_optima": [
       10,
-      12,
-      10
+      10,
+      8
     ],
     "rooms": 3,
     "boxes": 12
   },
   "5": {
-    "p_star": 44,
+    "p_star": 40,
     "per_room_optima": [
-      13,
       10,
-      10,
-      11
+      9,
+      11,
+      10
     ],
     "rooms": 4,
     "boxes": 16

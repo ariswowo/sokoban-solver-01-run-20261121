@@ -30,10 +30,13 @@
 //   leave their room in an optimal solution (a box pushed through a
 //   door into the hallway can never be pushed back), and the level's
 //   push-optimum P* is the SUM of the rooms' optima. So:
-//   1. Split the level at its bridge (door) cells into hallway + rooms.
+//   1. Split the level into hallway + rooms the kit's own way: dead
+//      squares (exact, by reverse pulls from the goals) on the player's
+//      row are the hallway; each remaining floor component holding boxes
+//      is a room. (Bridge components are a fallback.)
 //   2. Solve each room push-optimally with A* over pushes (player
 //      normalised to its reachable region, min-cost box->goal assignment
-//      heuristic, corner / wall-line / 2x2-freeze deadlock pruning).
+//      heuristic, exact dead squares, 2x2-freeze deadlock pruning).
 //   3. Stitch the rooms in the walk-cheapest order along the hallway.
 //   If decomposition does not apply, fall back to whole-level push A*,
 //   then to weighted A* (still deterministic node budgets).
@@ -194,49 +197,37 @@ interface DeadInfo {
 function computeDead(lv: Level): DeadInfo {
   const dist = allDistances(lv);
   const n = lv.w * lv.h;
+  // Exact dead squares (the kit's own definition): a floor square is live
+  // when a box on it can be pushed onto some goal, ignoring other boxes.
+  // Pull backwards from the goals: a box on y can be pushed in direction
+  // d onto live square x = y + d exactly when y and the player's stand
+  // square y - d are both floor. A square no such pull reaches is dead:
+  // no push sequence from it ever reaches a goal. (An earlier version
+  // used corner / wall-line heuristics here; they wrongly marked live
+  // squares dead — e.g. practice i001's boxes at (3,5) and (4,7), which
+  // escape their wall run at its open end — and pruned every solution.)
+  const live = new Uint8Array(n);
+  const q: number[] = [];
+  for (const g of lv.goals) { live[g] = 1; q.push(g); }
+  for (let qi = 0; qi < q.length; qi++) {
+    const x = q[qi];
+    const xx = x % lv.w, xy = Math.floor(x / lv.w);
+    for (const [dy, dx] of DIRS) {
+      const yx = xx - dx, yy = xy - dy;
+      if (yx < 0 || yx >= lv.w || yy < 0 || yy >= lv.h) continue;
+      const y = yy * lv.w + yx;
+      const sx = yx - dx, sy = yy - dy;
+      if (sx < 0 || sx >= lv.w || sy < 0 || sy >= lv.h) continue;
+      const sd = sy * lv.w + sx;
+      if (lv.walls[y] || lv.walls[sd] || live[y]) continue;
+      live[y] = 1;
+      q.push(y);
+    }
+  }
   const dead = new Uint8Array(n);
-  const goalArr = [...lv.goals];
-  // A cell is a simple dead square if no goal is reachable from it by a
-  // box moving (ignoring other boxes) — i.e. it is not in the same floor
-  // component as any goal — OR it is a corner / wall-line dead square.
-  // Wall-line: a maximal straight run of floor cells along a wall; if the
-  // run holds no goal, every cell of the run is dead for a box.
   for (let i = 0; i < n; i++) {
     if (lv.walls[i] || lv.goals.has(i)) continue;
-    let anyGoalReachable = false;
-    for (const g of goalArr) if (dist[i][g] >= 0) { anyGoalReachable = true; break; }
-    if (!anyGoalReachable) { dead[i] = 1; continue; }
-    const x = i % lv.w, y = Math.floor(i / lv.w);
-    const wallAt = (xx: number, yy: number): boolean =>
-      xx < 0 || xx >= lv.w || yy < 0 || yy >= lv.h || !!lv.walls[yy * lv.w + xx];
-    // Corner: two orthogonal neighbours are walls.
-    if ((wallAt(x, y - 1) || wallAt(x, y + 1)) && (wallAt(x - 1, y) || wallAt(x + 1, y))) {
-      // Only a corner if both a vertical and a horizontal neighbour are walls.
-      const vertWall = wallAt(x, y - 1) || wallAt(x, y + 1);
-      const horizWall = wallAt(x - 1, y) || wallAt(x + 1, y);
-      if (vertWall && horizWall) { dead[i] = 1; continue; }
-    }
-    // Wall-line: cell hugs a wall on one side; walk the run along that wall.
-    for (const [wy, wx] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
-      if (!wallAt(x + wx, y + wy)) continue;
-      // Run direction is perpendicular to the wall normal.
-      const [ry, rx] = wx !== 0 ? [1, 0] : [0, 1];
-      let hasGoal = false;
-      // Walk both ways along the run while cells hug the same wall.
-      for (const sgn of [1, -1]) {
-        let cx = x, cy = y;
-        for (;;) {
-          const ci = cy * lv.w + cx;
-          if (lv.goals.has(ci)) hasGoal = true;
-          const nx = cx + sgn * rx, ny = cy + sgn * ry;
-          if (nx < 0 || nx >= lv.w || ny < 0 || ny >= lv.h) break;
-          const ni = ny * lv.w + nx;
-          if (lv.walls[ni] || !wallAt(nx + wx, ny + wy)) break;
-          cx = nx; cy = ny;
-        }
-      }
-      if (!hasGoal) { dead[i] = 1; break; }
-    }
+    if (!live[i]) dead[i] = 1;
   }
   return { dead, dist };
 }
@@ -524,45 +515,55 @@ function componentAfterCut(lv: Level, cutU: number, cutV: number, seed: number):
   return seen;
 }
 
-function decompose(lv: Level): Room[] {
-  // Primary: the generator lays a 1-wide hallway across the board.
-  // Find its longest straight run (horizontal or vertical); rooms are
-  // the floor components left after removing the hallway cells.
-  const hall = findHallway(lv);
-  if (hall) {
-    const hallSet = new Set(hall.cells);
-    const rooms: Room[] = [];
-    const seen = new Set<number>();
-    for (const c of hall.cells) {
-      for (const nb of neighbours(lv, c)) {
-        if (lv.walls[nb] || hallSet.has(nb) || seen.has(nb)) continue;
-        // Flood the component of nb (floor minus hallway).
-        const comp = new Set<number>([nb]);
-        const q = [nb];
-        seen.add(nb);
-        for (let qi = 0; qi < q.length; qi++) {
-          for (const n2 of neighbours(lv, q[qi])) {
-            if (lv.walls[n2] || hallSet.has(n2) || comp.has(n2)) continue;
-            comp.add(n2); seen.add(n2); q.push(n2);
+function decompose(lv: Level, dead: Uint8Array): Room[] {
+  // Primary (the kit's own roomsOf): the hallway is the player's row. Cut
+  // that row's dead squares (a box there reaches no goal) out of the
+  // floor; each remaining component that holds boxes is a room. Null
+  // (here: no rooms) when a box starts in the hallway or a component's
+  // boxes and goals do not match. An earlier version guessed the hallway
+  // as the longest straight floor run, which is not the hallway on the
+  // real levels (practice i001/i002/i003 found partial or wrong rooms).
+  {
+    const row = Math.floor(lv.player / lv.w);
+    const cut = new Uint8Array(lv.w * lv.h);
+    for (let i = row * lv.w; i < (row + 1) * lv.w; i++) {
+      if (!lv.walls[i] && dead[i]) cut[i] = 1;
+    }
+    if (!lv.boxes.some((b) => cut[b])) {
+      const compId = new Int32Array(lv.w * lv.h).fill(-1);
+      const comps: number[][] = [];
+      for (let s = 0; s < lv.w * lv.h; s++) {
+        if (lv.walls[s] || cut[s] || compId[s] >= 0) continue;
+        const cells = [s];
+        compId[s] = comps.length;
+        for (let qi = 0; qi < cells.length; qi++) {
+          for (const nb of neighbours(lv, cells[qi])) {
+            if (lv.walls[nb] || cut[nb] || compId[nb] >= 0) continue;
+            compId[nb] = comps.length;
+            cells.push(nb);
           }
         }
-        const boxes = lv.boxes.filter((b) => comp.has(b));
-        const goals = [...lv.goals].filter((g) => comp.has(g));
+        comps.push(cells);
+      }
+      const rooms: Room[] = [];
+      for (const cells of comps) {
+        const cellSet = new Set(cells);
+        const boxes = lv.boxes.filter((b) => cellSet.has(b));
+        const goals = [...lv.goals].filter((g) => cellSet.has(g));
         if (!boxes.length || boxes.length !== goals.length) continue;
-        // Door: the component cell adjacent to a hallway cell.
         let door = -1, hallCell = -1;
-        for (const cell of [...comp].sort((a, b) => a - b)) {
-          for (const n2 of neighbours(lv, cell)) {
-            if (hallSet.has(n2)) { door = cell; hallCell = n2; break; }
+        for (const cell of [...cells].sort((a, b) => a - b)) {
+          for (const nb of neighbours(lv, cell)) {
+            if (!lv.walls[nb] && !cellSet.has(nb)) { door = cell; hallCell = nb; break; }
           }
           if (door >= 0) break;
         }
         if (door < 0) continue;
-        rooms.push({ cells: comp, door, hallCell, boxes, goals });
+        rooms.push({ cells: cellSet, door, hallCell, boxes, goals });
       }
+      rooms.sort((a, b) => a.door - b.door);
+      if (rooms.length) return rooms;
     }
-    rooms.sort((a, b) => a.door - b.door);
-    if (rooms.length) return rooms;
   }
   // Secondary: bridge components, kept only if they fit a 6x6 slot
   // (the generator's room size) and are maximal / disjoint.
@@ -596,38 +597,10 @@ function decompose(lv: Level): Room[] {
   return kept;
 }
 
-function findHallway(lv: Level): { cells: number[] } | null {
-  let best: number[] | null = null;
-  const consider = (run: number[]): void => {
-    if (run.length >= 8 && (!best || run.length > best.length)) best = [...run];
-  };
-  // Horizontal runs.
-  for (let y = 0; y < lv.h; y++) {
-    let run: number[] = [];
-    for (let x = 0; x < lv.w; x++) {
-      const i = y * lv.w + x;
-      if (!lv.walls[i]) run.push(i);
-      else { consider(run); run = []; }
-    }
-    consider(run);
-  }
-  // Vertical runs.
-  for (let x = 0; x < lv.w; x++) {
-    let run: number[] = [];
-    for (let y = 0; y < lv.h; y++) {
-      const i = y * lv.w + x;
-      if (!lv.walls[i]) run.push(i);
-      else { consider(run); run = []; }
-    }
-    consider(run);
-  }
-  return best ? { cells: best } : null;
-}
-
 // ------------------------------------------------------------ level solve
 function solveLevel(lv: Level): { moves: string; pushes: number; method: string } {
   const deadInfo = computeDead(lv);
-  const rooms = decompose(lv);
+  const rooms = decompose(lv, deadInfo.dead);
   const totalRoomBoxes = rooms.reduce((s, r) => s + r.boxes.length, 0);
   const totalRoomGoals = rooms.reduce((s, r) => s + r.goals.length, 0);
   if (process.env.SOK_DEBUG) {
